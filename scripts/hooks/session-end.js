@@ -5,7 +5,7 @@
  * Cross-platform (Windows, macOS, Linux)
  *
  * Runs when Claude session ends. Extracts a meaningful summary from
- * the session transcript (via CLAUDE_TRANSCRIPT_PATH) and saves it
+ * the session transcript (via stdin JSON transcript_path) and saves it
  * to a session file for cross-session continuity.
  */
 
@@ -38,6 +38,7 @@ function extractSessionSummary(transcriptPath) {
   const userMessages = [];
   const toolsUsed = new Set();
   const filesModified = new Set();
+  let parseErrors = 0;
 
   for (const line of lines) {
     try {
@@ -48,7 +49,7 @@ function extractSessionSummary(transcriptPath) {
         const text = typeof entry.content === 'string'
           ? entry.content
           : Array.isArray(entry.content)
-            ? entry.content.map(c => c.text || '').join(' ')
+            ? entry.content.map(c => (c && c.text) || '').join(' ')
             : '';
         if (text.trim()) {
           userMessages.push(text.trim().slice(0, 200));
@@ -66,8 +67,12 @@ function extractSessionSummary(transcriptPath) {
         }
       }
     } catch {
-      // Skip unparseable lines
+      parseErrors++;
     }
+  }
+
+  if (parseErrors > 0) {
+    log(`[SessionEnd] Skipped ${parseErrors}/${lines.length} unparseable transcript lines`);
   }
 
   if (userMessages.length === 0) return null;
@@ -80,7 +85,39 @@ function extractSessionSummary(transcriptPath) {
   };
 }
 
+// Read hook input from stdin (Claude Code provides transcript_path via stdin JSON)
+const MAX_STDIN = 1024 * 1024;
+let stdinData = '';
+process.stdin.setEncoding('utf8');
+
+process.stdin.on('data', chunk => {
+  if (stdinData.length < MAX_STDIN) {
+    stdinData += chunk;
+  }
+});
+
+process.stdin.on('end', () => {
+  runMain();
+});
+
+function runMain() {
+  main().catch(err => {
+    console.error('[SessionEnd] Error:', err.message);
+    process.exit(0);
+  });
+}
+
 async function main() {
+  // Parse stdin JSON to get transcript_path
+  let transcriptPath = null;
+  try {
+    const input = JSON.parse(stdinData);
+    transcriptPath = input.transcript_path;
+  } catch {
+    // Fallback: try env var for backwards compatibility
+    transcriptPath = process.env.CLAUDE_TRANSCRIPT_PATH;
+  }
+
   const sessionsDir = getSessionsDir();
   const today = getDateString();
   const shortId = getSessionIdShort();
@@ -91,27 +128,34 @@ async function main() {
   const currentTime = getTimeString();
 
   // Try to extract summary from transcript
-  const transcriptPath = process.env.CLAUDE_TRANSCRIPT_PATH;
   let summary = null;
 
-  if (transcriptPath && fs.existsSync(transcriptPath)) {
-    summary = extractSessionSummary(transcriptPath);
+  if (transcriptPath) {
+    if (fs.existsSync(transcriptPath)) {
+      summary = extractSessionSummary(transcriptPath);
+    } else {
+      log(`[SessionEnd] Transcript not found: ${transcriptPath}`);
+    }
   }
 
   if (fs.existsSync(sessionFile)) {
     // Update existing session file
-    replaceInFile(
+    const updated = replaceInFile(
       sessionFile,
       /\*\*Last Updated:\*\*.*/,
       `**Last Updated:** ${currentTime}`
     );
+    if (!updated) {
+      log(`[SessionEnd] Failed to update timestamp in ${sessionFile}`);
+    }
 
     // If we have a new summary and the file still has the blank template, replace it
     if (summary) {
       const existing = readFile(sessionFile);
       if (existing && existing.includes('[Session context goes here]')) {
+        // Use a flexible regex that tolerates CRLF, extra whitespace, and minor template variations
         const updatedContent = existing.replace(
-          /## Current State\n\n\[Session context goes here\]\n\n### Completed\n- \[ \]\n\n### In Progress\n- \[ \]\n\n### Notes for Next Session\n-\n\n### Context to Load\n```\n\[relevant files\]\n```/,
+          /## Current State\s*\n\s*\[Session context goes here\][\s\S]*?### Context to Load\s*\n```\s*\n\[relevant files\]\s*\n```/,
           buildSummarySection(summary)
         );
         writeFile(sessionFile, updatedContent);
@@ -145,10 +189,10 @@ ${summarySection}
 function buildSummarySection(summary) {
   let section = '## Session Summary\n\n';
 
-  // Tasks (from user messages)
+  // Tasks (from user messages — escape backticks to prevent markdown breaks)
   section += '### Tasks\n';
   for (const msg of summary.userMessages) {
-    section += `- ${msg}\n`;
+    section += `- ${msg.replace(/`/g, '\\`')}\n`;
   }
   section += '\n';
 
@@ -171,7 +215,3 @@ function buildSummarySection(summary) {
   return section;
 }
 
-main().catch(err => {
-  console.error('[SessionEnd] Error:', err.message);
-  process.exit(0);
-});
