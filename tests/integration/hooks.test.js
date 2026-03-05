@@ -262,8 +262,13 @@ async function runTests() {
       });
     });
 
-    assert.ok(stderr.includes('BLOCKED'), 'Blocking hook should output BLOCKED');
-    assert.strictEqual(code, 2, 'Blocking hook should exit with code 2');
+    // Hook only blocks on non-Windows platforms (tmux is Unix-only)
+    if (process.platform === 'win32') {
+      assert.strictEqual(code, 0, 'On Windows, hook should not block (exit 0)');
+    } else {
+      assert.ok(stderr.includes('BLOCKED'), 'Blocking hook should output BLOCKED');
+      assert.strictEqual(code, 2, 'Blocking hook should exit with code 2');
+    }
   })) passed++; else failed++;
 
   // ==========================================
@@ -298,7 +303,12 @@ async function runTests() {
       });
     });
 
-    assert.strictEqual(code, 2, 'Blocking hook should exit 2');
+    // Hook only blocks on non-Windows platforms (tmux is Unix-only)
+    if (process.platform === 'win32') {
+      assert.strictEqual(code, 0, 'On Windows, hook should not block (exit 0)');
+    } else {
+      assert.strictEqual(code, 2, 'Blocking hook should exit 2');
+    }
   })) passed++; else failed++;
 
   if (await asyncTest('hooks handle missing files gracefully', async () => {
@@ -682,10 +692,11 @@ async function runTests() {
 
           const isInline = hook.command.startsWith('node -e');
           const isFilePath = hook.command.startsWith('node "');
+          const isShellScript = hook.command.endsWith('.sh');
 
           assert.ok(
-            isInline || isFilePath,
-            `Hook command in ${hookType} should be inline (node -e) or file path (node "), got: ${hook.command.substring(0, 50)}`
+            isInline || isFilePath || isShellScript,
+            `Hook command in ${hookType} should be inline (node -e), file path (node "), or shell script (.sh), got: ${hook.command.substring(0, 80)}`
           );
         }
       }

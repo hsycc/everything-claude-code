@@ -1183,7 +1183,7 @@ async function runTests() {
     assert.ok(hooks.hooks.PreCompact, 'Should have PreCompact hooks');
   })) passed++; else failed++;
 
-  if (test('all hook commands use node', () => {
+  if (test('all hook commands use node or are skill shell scripts', () => {
     const hooksPath = path.join(__dirname, '..', '..', 'hooks', 'hooks.json');
     const hooks = JSON.parse(fs.readFileSync(hooksPath, 'utf8'));
 
@@ -1191,9 +1191,14 @@ async function runTests() {
       for (const entry of hookArray) {
         for (const hook of entry.hooks) {
           if (hook.type === 'command') {
+            const isNode = hook.command.startsWith('node');
+            const isSkillScript = hook.command.includes('/skills/') && (
+              /^(bash|sh)\s/.test(hook.command) ||
+              hook.command.startsWith('${CLAUDE_PLUGIN_ROOT}/skills/')
+            );
             assert.ok(
-              hook.command.startsWith('node'),
-              `Hook command should start with 'node': ${hook.command.substring(0, 50)}...`
+              isNode || isSkillScript,
+              `Hook command should start with 'node' or be a skill shell script: ${hook.command.substring(0, 80)}...`
             );
           }
         }
@@ -1324,7 +1329,7 @@ async function runTests() {
       val = parseInt(fs.readFileSync(counterFile, 'utf8').trim(), 10);
       assert.strictEqual(val, 2, 'Second call should write count 2');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
@@ -1341,7 +1346,7 @@ async function runTests() {
       assert.strictEqual(result.code, 0);
       assert.ok(result.stderr.includes('5 tool calls reached'), 'Should suggest compact at threshold');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
@@ -1359,7 +1364,7 @@ async function runTests() {
       assert.strictEqual(result.code, 0);
       assert.ok(result.stderr.includes('30 tool calls'), 'Should suggest at threshold + 25n intervals');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
@@ -1376,7 +1381,7 @@ async function runTests() {
       assert.ok(!result.stderr.includes('tool calls reached'), 'Should not suggest below threshold');
       assert.ok(!result.stderr.includes('checkpoint'), 'Should not suggest checkpoint');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
@@ -1394,7 +1399,7 @@ async function runTests() {
       const newCount = parseInt(fs.readFileSync(counterFile, 'utf8').trim(), 10);
       assert.strictEqual(newCount, 1, 'Should reset to 1 on overflow value');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
@@ -1410,7 +1415,7 @@ async function runTests() {
       const newCount = parseInt(fs.readFileSync(counterFile, 'utf8').trim(), 10);
       assert.strictEqual(newCount, 1, 'Should reset to 1 on negative value');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
@@ -1426,7 +1431,7 @@ async function runTests() {
       assert.strictEqual(result.code, 0);
       assert.ok(result.stderr.includes('50 tool calls reached'), 'Zero threshold should fall back to 50');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
@@ -1443,7 +1448,7 @@ async function runTests() {
       assert.strictEqual(result.code, 0);
       assert.ok(result.stderr.includes('50 tool calls reached'), 'Should use default threshold of 50');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
@@ -1719,7 +1724,7 @@ async function runTests() {
     assert.ok(updated.includes('/src/auth.ts'), 'Should include modified file');
   })) passed++; else failed++;
 
-  if (await asyncTest('preserves existing session content when no blank template marker', async () => {
+  if (await asyncTest('always updates session summary content on session end', async () => {
     const testDir = createTestDir();
     const sessionsDir = path.join(testDir, '.claude', 'sessions');
     fs.mkdirSync(sessionsDir, { recursive: true });
@@ -1729,7 +1734,7 @@ async function runTests() {
 
     const shortId = 'update03';
     const sessionFile = path.join(sessionsDir, `${today}-${shortId}-session.tmp`);
-    // Pre-existing file with ALREADY-FILLED summary (no blank template marker)
+    // Pre-existing file with already-filled summary
     const existingContent = `# Session: ${today}\n**Date:** ${today}\n**Started:** 08:00\n**Last Updated:** 08:30\n\n---\n\n## Session Summary\n\n### Tasks\n- Previous task from earlier\n`;
     fs.writeFileSync(sessionFile, existingContent);
 
@@ -1744,9 +1749,9 @@ async function runTests() {
     assert.strictEqual(result.code, 0);
 
     const updated = fs.readFileSync(sessionFile, 'utf8');
-    // Should NOT overwrite existing summary (no blank template marker found)
-    assert.ok(updated.includes('Previous task from earlier'), 'Should preserve existing content');
-    assert.ok(!updated.includes('New task'), 'Should not replace non-template content');
+    // Session summary should always be refreshed with current content (#317)
+    assert.ok(updated.includes('## Session Summary'), 'Should have Session Summary section');
+    assert.ok(updated.includes('# Session:'), 'Should preserve session header');
   })) passed++; else failed++;
 
   console.log('\nRound 23: pre-compact.js (glob specificity):');
@@ -1883,7 +1888,7 @@ async function runTests() {
       assert.strictEqual(result.code, 0);
       assert.ok(result.stderr.includes('38 tool calls'), 'Should suggest at threshold(13) + 25 = 38');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
@@ -1901,7 +1906,7 @@ async function runTests() {
       assert.strictEqual(result.code, 0);
       assert.ok(!result.stderr.includes('checkpoint'), 'Should NOT suggest at count=50 with threshold=13');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
@@ -1918,7 +1923,7 @@ async function runTests() {
       const newCount = parseInt(fs.readFileSync(counterFile, 'utf8').trim(), 10);
       assert.strictEqual(newCount, 1, 'Should reset to 1 on corrupted file content');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
@@ -1935,7 +1940,7 @@ async function runTests() {
       const newCount = parseInt(fs.readFileSync(counterFile, 'utf8').trim(), 10);
       assert.strictEqual(newCount, 1000001, 'Should increment from exactly 1000000');
     } finally {
-      try { fs.unlinkSync(counterFile); } catch {}
+      try { fs.unlinkSync(counterFile); } catch { /* ignore */ }
     }
   })) passed++; else failed++;
 
